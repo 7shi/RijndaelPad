@@ -13,41 +13,24 @@ namespace RijndaelPad
 {
     public partial class Form1 : Form
     {
-        public Form1()
+        private static MD5CryptoServiceProvider md5 = new MD5CryptoServiceProvider();
+
+        public static void Encrypt(Stream sout, byte[] data, byte[] key)
         {
-            InitializeComponent();
-        }
-
-        private bool isChanged = false;
-        private string filename = "";
-
-        private void textBox1_TextChanged(object sender, EventArgs e)
-        {
-            isChanged = true;
-        }
-
-        public static void Encrypt(Stream sout, byte[] data, string password)
-        {
-            var md5 = new MD5CryptoServiceProvider();
-            var key = md5.ComputeHash(Encoding.UTF8.GetBytes(password));
-            var iv = md5.ComputeHash(key);
-
             var sin = new MemoryStream(data);
             var rm = new RijndaelManaged();
-            using (var cs = new CryptoStream(sout, rm.CreateEncryptor(key, iv), CryptoStreamMode.Write))
+            var enc = rm.CreateEncryptor(key, md5.ComputeHash(key));
+            using (var cs = new CryptoStream(sout, enc, CryptoStreamMode.Write))
                 cs.Write(data, 0, data.Length);
         }
 
-        public static void Decrypt(Stream sout, byte[] data, string password)
+        public static void Decrypt(Stream sout, byte[] data, byte[] key)
         {
-            var md5 = new MD5CryptoServiceProvider();
-            var key = md5.ComputeHash(Encoding.UTF8.GetBytes(password));
-            var iv = md5.ComputeHash(key);
-
             var sin = new MemoryStream(data);
             var rm = new RijndaelManaged();
             var buf = new byte[4096];
-            using (var cs = new CryptoStream(sin, rm.CreateDecryptor(key, iv), CryptoStreamMode.Read))
+            var dec = rm.CreateDecryptor(key, md5.ComputeHash(key));
+            using (var cs = new CryptoStream(sin, dec, CryptoStreamMode.Read))
             {
                 int len;
                 while ((len = cs.Read(buf, 0, buf.Length)) > 0)
@@ -55,12 +38,26 @@ namespace RijndaelPad
             }
         }
 
-        private string GetPassword()
+        public Form1()
+        {
+            InitializeComponent();
+        }
+
+        private bool isChanged = false;
+        private string filename = "";
+        private byte[] key;
+
+        private void textBox1_TextChanged(object sender, EventArgs e)
+        {
+            isChanged = true;
+        }
+
+        private byte[] getKey()
         {
             using (var f = new Form2())
             {
                 if (f.ShowDialog(this) == DialogResult.OK)
-                    return f.Password;
+                    return md5.ComputeHash(Encoding.UTF8.GetBytes(f.Password));
                 else
                     return null;
             }
@@ -72,6 +69,7 @@ namespace RijndaelPad
             if (saveFileDialog1.ShowDialog(this) != DialogResult.OK) return false;
 
             filename = saveFileDialog1.FileName;
+            key = null;
             return save();
         }
 
@@ -79,13 +77,16 @@ namespace RijndaelPad
         {
             if (filename == "") return saveAs();
 
-            var password = GetPassword();
-            if (password == null) return false;
+            while (key == null)
+            {
+                key = getKey();
+                if (key == null) return false;
+            }
 
             try
             {
                 using (var fs = new FileStream(filename, FileMode.Create))
-                    Encrypt(fs, Encoding.UTF8.GetBytes(textBox1.Text), password);
+                    Encrypt(fs, Encoding.UTF8.GetBytes(textBox1.Text), key);
                 isChanged = false;
                 return true;
             }
@@ -109,21 +110,27 @@ namespace RijndaelPad
 
         public void Open(string filename)
         {
-            string password = GetPassword();
-            if (password == null) return;
+            for (; ; )
+            {
+                var key = getKey();
+                if (key == null) return;
 
-            try
-            {
-                var ms = new MemoryStream();
-                Decrypt(ms, File.ReadAllBytes(filename), password);
-                textBox1.Clear();
-                textBox1.Text = Encoding.UTF8.GetString(ms.ToArray());
-                isChanged = false;
-                this.filename = filename;
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+                try
+                {
+                    var ms = new MemoryStream();
+                    Decrypt(ms, File.ReadAllBytes(filename), key);
+                    textBox1.Clear();
+                    textBox1.Text = Encoding.UTF8.GetString(ms.ToArray());
+                    isChanged = false;
+                    this.filename = filename;
+                    this.key = key;
+                    return;
+                }
+                catch
+                {
+                    MessageBox.Show("パスワードが違います。", Text,
+                        MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+                }
             }
         }
 
@@ -139,6 +146,7 @@ namespace RijndaelPad
 
             isChanged = false;
             filename = null;
+            key = null;
             textBox1.Clear();
         }
 
@@ -146,7 +154,6 @@ namespace RijndaelPad
         {
             if (checkSave() && openFileDialog1.ShowDialog(this) == DialogResult.OK)
                 Open(openFileDialog1.FileName);
-
         }
 
         private void mnuFileSave_Click(object sender, EventArgs e)
